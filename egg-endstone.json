@@ -16,7 +16,7 @@
         "Python 3.11": "ghcr.io\/parkervcp\/yolks:python_3.11"
     },
     "file_denylist": [],
-    "startup": "python -m pip install -U pip && pip install -U \"${SERVER_WHLFILE:-endstone${ENDSTONE_VERSION:+==$ENDSTONE_VERSION}}\" && python -m endstone -s . -y",
+    "startup": "python -m pip install -U pip && PKG=\"endstone${ENDSTONE_VERSION:+==$ENDSTONE_VERSION}\" && pip install -U \"${SERVER_WHLFILE:-$PKG}\" && python -m endstone -s . -y",
     "config": {
         "files": "{ \"server.properties\": { \"parser\": \"properties\", \"find\": { \"server-port\": \"{{server.build.default.port}}\" } } }",
         "startup": "{ \"done\": \"Server started.\" }",
@@ -25,9 +25,9 @@
     },
     "scripts": {
         "installation": {
-            "script": "#!\/bin\/bash\n# Endstone Installation Script\n#\n# Server Files: \/mnt\/server\napt update\napt install -y curl\n\nmkdir -p \/mnt\/server\ncd \/mnt\/server\n\nif [ ! -f server.properties ]; then\n    echo -e \"Downloading server.properties\"\n    curl -o server.properties https:\/\/raw.githubusercontent.com\/EndstoneMC\/pterodactyl\/main\/server.properties\nfi\n\nexport HOME=\/mnt\/server\n\necho -e \"Installation complete\"\nexit 0",
-            "container": "python:3.12-slim-bookworm",
-            "entrypoint": "bash"
+            "script": "#!\/bin\/ash\n# Endstone Installation Script\n# Server Files: \/mnt\/server\nmkdir -p \/mnt\/server\ncd \/mnt\/server\n\nif [ ! -f server.properties ]; then\n    echo \"Downloading server.properties\"\n    curl -fL --user-agent \"Pterodactyl\" -o server.properties https:\/\/raw.githubusercontent.com\/EndstoneMC\/pterodactyl\/main\/server.properties\nfi\n\necho \"Installation complete\"",
+            "container": "ghcr.io\/pterodactyl\/installers:alpine",
+            "entrypoint": "ash"
         }
     },
     "variables": [
