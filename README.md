@@ -17,23 +17,34 @@ The egg automatically runs the latest version of Endstone on first start.
 
 ### Endstone Version
 
-The `ENDSTONE_VERSION` variable controls which version to run. By default it's set to
-`endstone` which always runs the latest release.
-
-Examples:
+The `ENDSTONE_VERSION` variable controls which version to run. Leave it blank to always run
+the latest release, or enter a version number to pin a specific release.
 
 | Value | Effect |
 |-------|--------|
-| `endstone` | Always run the latest release (default) |
-| `endstone==0.11.2` | Pin a specific version |
-| `https://example.com/endstone-0.12.0-py3-none-any.whl` | Run from a direct URL |
-| `endstone-0.12.0-py3-none-any.whl` | Run a `.whl` file uploaded to the server |
+| *(blank)* | Always run the latest release (default) |
+| `0.11.5` | Pin a specific version |
 
 Available versions are listed on [PyPI](https://pypi.org/project/endstone/#history).
 
+### Local Wheel File
+
+The `SERVER_WHLFILE` variable installs Endstone from a local `.whl` file instead of PyPI —
+useful for running a development build or a version not published to PyPI. Leave it blank to
+install from PyPI using `ENDSTONE_VERSION`; when set, it takes precedence over the version.
+
+| Value | Effect |
+|-------|--------|
+| *(blank)* | Install from PyPI (default) |
+| `endstone-0.12.0-py3-none-any.whl` | Install a `.whl` uploaded to the server |
+| `https://example.com/endstone-0.12.0-py3-none-any.whl` | Install from a direct URL |
+
+Upload the `.whl` to the server's root folder via the panel's file manager or SFTP, then set
+this variable to its filename.
+
 ### Docker Image
 
-The egg supports Python 3.10 through 3.14. Python 3.12 is recommended for most users.
+The egg supports Python 3.11 through 3.14. Python 3.12 is recommended for most users.
 Choose a different image only if a plugin requires a specific Python version.
 
 ### Server Properties
@@ -62,8 +73,8 @@ Find plugins on [PyPI](https://pypi.org/search/?q=endstone) or build your own us
 
 ## Updating Endstone
 
-If `ENDSTONE_VERSION` is set to `endstone` (the default), simply restarting the server will
-run the latest version. If you've pinned a version, update the variable and restart.
+If `ENDSTONE_VERSION` is left blank (the default), simply restarting the server will run the
+latest version. If you've pinned a version, update the variable and restart.
 
 ## Documentation
 

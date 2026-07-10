@@ -13,8 +13,7 @@
         "Python 3.14": "ghcr.io\/parkervcp\/yolks:python_3.14",
         "Python 3.13": "ghcr.io\/parkervcp\/yolks:python_3.13",
         "Python 3.12": "ghcr.io\/parkervcp\/yolks:python_3.12",
-        "Python 3.11": "ghcr.io\/parkervcp\/yolks:python_3.11",
-        "Python 3.10": "ghcr.io\/parkervcp\/yolks:python_3.10"
+        "Python 3.11": "ghcr.io\/parkervcp\/yolks:python_3.11"
     },
     "file_denylist": [],
     "startup": "python -m pip install -U pip && pip install -U \"${SERVER_WHLFILE:-endstone${ENDSTONE_VERSION:+==$ENDSTONE_VERSION}}\" && python -m endstone -s . -y",
