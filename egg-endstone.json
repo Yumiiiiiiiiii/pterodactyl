@@ -17,7 +17,7 @@
         "Python 3.10": "ghcr.io\/parkervcp\/yolks:python_3.10"
     },
     "file_denylist": [],
-    "startup": "python -m pip install -U pip && pip install -U \"endstone${ENDSTONE_VERSION:+==$ENDSTONE_VERSION}\" && python -m endstone -s . -y",
+    "startup": "python -m pip install -U pip && pip install -U \"${SERVER_WHLFILE:-endstone${ENDSTONE_VERSION:+==$ENDSTONE_VERSION}}\" && python -m endstone -s . -y",
     "config": {
         "files": "{ \"server.properties\": { \"parser\": \"properties\", \"find\": { \"server-port\": \"{{server.build.default.port}}\" } } }",
         "startup": "{ \"done\": \"Server started.\" }",
@@ -36,6 +36,16 @@
             "name": "Endstone Version",
             "description": "The version of endstone to install.\n\nLeave blank to always get the latest version, or enter a version number (e.g. \"0.11.5\") to pin a specific version.",
             "env_variable": "ENDSTONE_VERSION",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Endstone Wheel File",
+            "description": "Path to a local .whl file to install endstone from instead of PyPI.\n\nLeave blank to install from PyPI using the version above. When set, this overrides the version.",
+            "env_variable": "SERVER_WHLFILE",
             "default_value": "",
             "user_viewable": true,
             "user_editable": true,
