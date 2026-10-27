@@ -1,0 +1,164 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-10-28T00:00:00+09:00",
+    "name": "Endstone Fork (検証済み更新)",
+    "author": "77167437+Yumiiiiiiiiii@users.noreply.github.com",
+    "description": "自分のForkの検証済みReleaseから導入します。更新は停止中にバックアップと承認を確認し、起動失敗時は元の環境へ復旧します。BDS 1.26.60の検証済みReleaseはまだありません。",
+    "features": [],
+    "docker_images": {
+        "Fork runtime / Python 3.13": "ghcr.io/yumiiiiiiiiii/endstone-wings:stable"
+    },
+    "file_denylist": [
+        ".fork/credentials/*"
+    ],
+    "startup": "python /opt/endstone-fork/manager.py start --root /home/container",
+    "config": {
+        "files": "{ \"server.properties\": { \"parser\": \"properties\", \"find\": { \"server-port\": \"{{server.build.default.port}}\" } } }",
+        "startup": "{\"done\": \"Server started.\"}",
+        "logs": "{}",
+        "stop": "stop"
+    },
+    "scripts": {
+        "installation": {
+            "container": "ghcr.io/yumiiiiiiiiii/endstone-wings:stable",
+            "entrypoint": "bash",
+            "script": "#!/bin/bash\nset -euo pipefail\nmkdir -p /mnt/server\npython /opt/endstone-fork/manager.py prepare --root /mnt/server\n"
+        }
+    },
+    "variables": [
+        {
+            "name": "Endstone取得元",
+            "env_variable": "ENDSTONE_SOURCE",
+            "default_value": "custom-fork",
+            "description": "custom-fork固定。本人ForkのReleaseを使用します。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|in:custom-fork",
+            "field_type": "text"
+        },
+        {
+            "name": "Endstone Fork",
+            "env_variable": "ENDSTONE_FORK",
+            "default_value": "Yumiiiiiiiiii/endstone",
+            "description": "GitHubの所有者/リポジトリ。Releaseとmanifestの所有者を照合します。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "固定Release",
+            "env_variable": "ENDSTONE_RELEASE",
+            "default_value": "stable",
+            "description": "GitHub Releaseのタグ。stableは検証済み更新用。特定タグを指定するとその版に固定します。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "BDSバージョン",
+            "env_variable": "BDS_VERSION",
+            "default_value": "1.26.60",
+            "description": "検証済みmanifestと一致するBDSだけ導入します。未対応の版は起動前に停止します。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "更新チャンネル",
+            "env_variable": "UPDATE_CHANNEL",
+            "default_value": "stable",
+            "description": "stableは実行時テスト必須。candidateは開発用です。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|in:stable,candidate",
+            "field_type": "text"
+        },
+        {
+            "name": "起動前に更新確認",
+            "env_variable": "AUTO_UPDATE_CHECK",
+            "default_value": "true",
+            "description": "通常の起動時に確認します。実行中のサーバーを再起動する機能ではありません。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "プラグインも更新",
+            "env_variable": "AUTO_UPDATE_PLUGINS",
+            "default_value": "true",
+            "description": "検証済みmanifestに記載されたプラグインを同時に導入します。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "更新前バックアップ",
+            "env_variable": "BACKUP_BEFORE_UPDATE",
+            "default_value": "true",
+            "description": "true必須。ワールド、プラグイン、設定、現在の版を保存できなければ更新しません。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|in:true",
+            "field_type": "text"
+        },
+        {
+            "name": "失敗時に復旧",
+            "env_variable": "ROLLBACK_ON_FAILURE",
+            "default_value": "true",
+            "description": "起動確認に失敗したらBDS、Endstone、プラグイン、ワールドを一組で戻します。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "更新に承認が必要",
+            "env_variable": "UPDATE_REQUIRE_APPROVAL",
+            "default_value": "true",
+            "description": "trueでは下のSHA256が一致した更新だけ適用します。承認待ちは現在の版を維持します。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "承認するmanifestのSHA256",
+            "env_variable": "UPDATE_APPROVED_MANIFEST",
+            "default_value": "",
+            "description": "更新確認で表示された64桁のSHA256を貼り付けます。初回導入にも必要です。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "nullable|string|size:64",
+            "field_type": "text"
+        },
+        {
+            "name": "プラグイン配布リポジトリ",
+            "env_variable": "PLUGIN_REPOSITORIES",
+            "default_value": "",
+            "description": "許可するGitHub所有者/リポジトリをカンマで区切ります。ソースはこの公開Forkへ入れません。",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "詳細ログ",
+            "env_variable": "DEBUG",
+            "default_value": "false",
+            "description": "起動時にReleaseとソースcommitを表示します。認証情報は表示しません。",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|in:true,false",
+            "field_type": "text"
+        }
+    ]
+}

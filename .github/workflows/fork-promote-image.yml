@@ -1,0 +1,82 @@
+name: Promote tested Wings image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full tested Pterodactyl Fork commit
+        type: string
+        required: true
+      image_digest:
+        description: sha256 digest tested by the Wings runtime validation
+        type: string
+        required: true
+      validation_run:
+        description: Endstone Fork CI run containing full-runtime-evidence for that exact image
+        type: string
+        required: true
+      endstone_source_sha:
+        description: Full Endstone commit identified by the validation report
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    if: github.repository == 'Yumiiiiiiiiii/pterodactyl'
+    runs-on: ubuntu-24.04
+    environment: stable-promotion
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Check exact tested image and evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          VALIDATION_RUN: ${{ inputs.validation_run }}
+          ENDSTONE_SHA: ${{ inputs.endstone_source_sha }}
+        run: |
+          python - <<'PY'
+          import os,re
+          assert re.fullmatch(r'[0-9a-f]{40}', os.environ['SOURCE_SHA'])
+          assert re.fullmatch(r'[0-9a-f]{40}', os.environ['ENDSTONE_SHA'])
+          assert re.fullmatch(r'sha256:[0-9a-f]{64}', os.environ['IMAGE_DIGEST'])
+          assert re.fullmatch(r'[0-9]+', os.environ['VALIDATION_RUN'])
+          PY
+          gh run download "$VALIDATION_RUN" --repo Yumiiiiiiiiii/endstone --name "full-runtime-evidence-$ENDSTONE_SHA" --dir evidence
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          m=json.loads(Path('evidence/validation.json').read_text())
+          assert m['commit']==os.environ['ENDSTONE_SHA']
+          assert m['runtime_commit']==os.environ['SOURCE_SHA']
+          assert m['docker_image_digest']==os.environ['IMAGE_DIGEST']
+          for key in ['docker','wings']:
+              assert m['checks'][key]=='passed'
+              item=m['evidence_files'][key]
+              file=(Path('evidence')/item['path']).resolve()
+              assert file.is_relative_to(Path('evidence').resolve())
+              assert hashlib.sha256(file.read_bytes()).hexdigest()==item['sha256']
+          PY
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag exact validated digest, without rebuilding
+        env:
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: docker buildx imagetools create --tag ghcr.io/yumiiiiiiiiii/endstone-wings:stable "ghcr.io/yumiiiiiiiiii/endstone-wings@$IMAGE_DIGEST"

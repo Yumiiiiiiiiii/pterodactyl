@@ -1,0 +1,78 @@
+name: Fork Egg and Wings runtime
+
+on:
+  push:
+    branches: [dev, 'feature/**']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_candidate:
+        description: Publish SHA-tagged candidate image (never stable)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.repository == 'Yumiiiiiiiiii/pterodactyl'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: |
+          python build_egg.py
+          git diff --exit-code -- egg-endstone-fork.json
+          python validate.py egg-endstone-fork.json
+          python -m unittest discover -s tests -v
+          bash -n runtime/entrypoint.sh
+      - uses: docker/setup-buildx-action@v4
+      - name: Build container locally
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: endstone-wings:test
+      - name: Exercise container as Wings user (offline backup and rollback tests)
+        run: |
+          docker run --rm --entrypoint python -v "$PWD/tests:/tmp/tests:ro" -v "$PWD/runtime:/tmp/runtime:ro" \
+            --workdir /tmp endstone-wings:test -m unittest discover -s tests -v
+          docker run --rm --entrypoint bash endstone-wings:test -c \
+            'test "$(id -u)" = 1000 && test "$PWD" = /home/container && python /opt/endstone-fork/manager.py --help'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fork-egg-${{ github.sha }}
+          path: egg-endstone-fork.json
+  candidate-image:
+    if: github.repository == 'Yumiiiiiiiiii/pterodactyl' && github.event_name == 'workflow_dispatch' && inputs.publish_candidate
+    needs: validate
+    runs-on: ubuntu-24.04
+    environment: candidate-publish
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/yumiiiiiiiiii/endstone-wings:sha-${{ github.sha }}

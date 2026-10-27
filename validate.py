@@ -21,7 +21,7 @@ def validate(path: str) -> list[str]:
 
     # Parse JSON
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             egg = json.load(f)
     except json.JSONDecodeError as e:
         return [f"Invalid JSON: {e}"]
