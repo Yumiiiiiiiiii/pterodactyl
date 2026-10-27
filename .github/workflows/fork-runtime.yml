@@ -46,7 +46,14 @@ jobs:
             --workdir /tmp endstone-wings:test -m unittest discover -s tests -v
           docker run --rm --entrypoint bash endstone-wings:test -c \
             'test "$(id -u)" = 1000 && test "$PWD" = /home/container && python /opt/endstone-fork/manager.py --help'
-          bash tests/test_install_entrypoint.sh endstone-wings:test
+      - name: Build installer with the actual Wings image user
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: installer
+          load: true
+          tags: endstone-wings:installer-test
+      - run: bash tests/test_install_entrypoint.sh endstone-wings:installer-test
       - uses: actions/upload-artifact@v7
         with:
           name: fork-egg-${{ github.sha }}
@@ -77,3 +84,10 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ghcr.io/yumiiiiiiiiii/endstone-wings:sha-${{ github.sha }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: installer
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/yumiiiiiiiiii/endstone-wings:sha-${{ github.sha }}-installer

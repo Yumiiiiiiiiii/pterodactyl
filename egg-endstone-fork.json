@@ -24,7 +24,7 @@
     },
     "scripts": {
         "installation": {
-            "container": "ghcr.io/yumiiiiiiiiii/endstone-wings:stable",
+            "container": "ghcr.io/yumiiiiiiiiii/endstone-wings:stable-installer",
             "entrypoint": "bash",
             "script": "#!/bin/bash\nset -euo pipefail\nmkdir -p /mnt/server\npython /opt/endstone-fork/manager.py prepare --root /mnt/server\n"
         }

@@ -11,6 +11,10 @@ on:
         description: sha256 digest tested by the Wings runtime validation
         type: string
         required: true
+      installer_digest:
+        description: sha256 digest of the installer verified on the same Wings node
+        type: string
+        required: true
       validation_run:
         description: Endstone Fork CI run containing full-runtime-evidence for that exact image
         type: string
@@ -45,6 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           IMAGE_DIGEST: ${{ inputs.image_digest }}
+          INSTALLER_DIGEST: ${{ inputs.installer_digest }}
           VALIDATION_RUN: ${{ inputs.validation_run }}
           ENDSTONE_SHA: ${{ inputs.endstone_source_sha }}
         run: |
@@ -53,7 +58,18 @@ jobs:
           assert re.fullmatch(r'[0-9a-f]{40}', os.environ['SOURCE_SHA'])
           assert re.fullmatch(r'[0-9a-f]{40}', os.environ['ENDSTONE_SHA'])
           assert re.fullmatch(r'sha256:[0-9a-f]{64}', os.environ['IMAGE_DIGEST'])
+          assert re.fullmatch(r'sha256:[0-9a-f]{64}', os.environ['INSTALLER_DIGEST'])
           assert re.fullmatch(r'[0-9]+', os.environ['VALIDATION_RUN'])
+          PY
+          gh api "repos/Yumiiiiiiiiii/endstone/actions/runs/$VALIDATION_RUN" > /tmp/validation-run.json
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          run=json.loads(Path('/tmp/validation-run.json').read_text())
+          assert run['status']=='completed' and run['conclusion']=='success'
+          assert run['head_sha']==os.environ['ENDSTONE_SHA']
+          assert run['head_repository']['full_name']=='Yumiiiiiiiiii/endstone'
+          assert run['path']=='.github/workflows/fork-ci.yml'
           PY
           gh run download "$VALIDATION_RUN" --repo Yumiiiiiiiiii/endstone --name "full-runtime-evidence-$ENDSTONE_SHA" --dir evidence
           python - <<'PY'
@@ -63,7 +79,10 @@ jobs:
           assert m['commit']==os.environ['ENDSTONE_SHA']
           assert m['runtime_commit']==os.environ['SOURCE_SHA']
           assert m['docker_image_digest']==os.environ['IMAGE_DIGEST']
-          for key in ['docker','wings']:
+          assert m['installer_image_digest']==os.environ['INSTALLER_DIGEST']
+          checks=['native_abi','boot','commands','scheduler','world_save_restart','player_events',
+                  'block_entity','network','plugins','docker','wings']
+          for key in checks:
               assert m['checks'][key]=='passed'
               item=m['evidence_files'][key]
               file=(Path('evidence')/item['path']).resolve()
@@ -79,4 +98,7 @@ jobs:
       - name: Tag exact validated digest, without rebuilding
         env:
           IMAGE_DIGEST: ${{ inputs.image_digest }}
-        run: docker buildx imagetools create --tag ghcr.io/yumiiiiiiiiii/endstone-wings:stable "ghcr.io/yumiiiiiiiiii/endstone-wings@$IMAGE_DIGEST"
+          INSTALLER_DIGEST: ${{ inputs.installer_digest }}
+        run: |
+          docker buildx imagetools create --tag ghcr.io/yumiiiiiiiiii/endstone-wings:stable "ghcr.io/yumiiiiiiiiii/endstone-wings@$IMAGE_DIGEST"
+          docker buildx imagetools create --tag ghcr.io/yumiiiiiiiiii/endstone-wings:stable-installer "ghcr.io/yumiiiiiiiiii/endstone-wings@$INSTALLER_DIGEST"

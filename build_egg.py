@@ -22,7 +22,7 @@ def main():
         "startup": "python /opt/endstone-fork/manager.py start --root /home/container",
         "file_denylist": [".fork/credentials/*"],
         "scripts": {"installation": {
-            "container": image,
+            "container": image + "-installer",
             "entrypoint": "bash",
             "script": "#!/bin/bash\nset -euo pipefail\nmkdir -p /mnt/server\npython /opt/endstone-fork/manager.py prepare --root /mnt/server\n",
         }},

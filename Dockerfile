@@ -1,4 +1,4 @@
-FROM python:3.13-slim-bookworm
+FROM python:3.13-slim-bookworm AS base
 
 LABEL org.opencontainers.image.source="https://github.com/Yumiiiiiiiiii/pterodactyl" \
       org.opencontainers.image.title="Endstone Fork Wings Runtime"
@@ -19,9 +19,16 @@ COPY runtime/manager.py /opt/endstone-fork/manager.py
 COPY runtime/entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh /opt/endstone-fork/manager.py
 
-USER container
 WORKDIR /home/container
 EXPOSE 19132/udp 19133/udp
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python /opt/endstone-fork/manager.py start"]
+
+# Wings does not override the installation container's image user. Its mounted
+# script and /mnt/server require root; runtime containers use the node's UID.
+FROM base AS installer
+USER root
+
+FROM base AS runtime
+USER container
