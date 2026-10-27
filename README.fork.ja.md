@@ -104,7 +104,17 @@ GH ActionsのDockerジョブも、オフライン管理コードの試験とBDS/
 
 別途、新設検証用Wingsサーバー538ad142ではBDS1.26.52の不正ELF・プラグインを注入し、
 実health trialの失敗後に3,268ファイルとcurrent状態の完全復旧を確認した。
-26.60へのワールド形式移行・復旧は未検証。既存の本番サーバーは変更していない。
+追加の隔離試験では、比較用ワールドをvanilla26.60.6で保存し、level.datの記録版が
+1.26.52.3→1.26.60.6へ変わり、LevelDBを含む6ファイルが更新されたことを確認した。
+その後、4,636ファイル・版状態・旧環境をスナップショットへ戻し、比較用Forkで3プラグインの
+起動・コマンド・SQLite保存を再確認した。旧BDSで新しいままのワールドを開いてはいない。
+この試験は`tests/runtime_world_rollback.py`で再現する。Endstone26.60、Wings上での26.60更新、
+任意の将来のワールド形式への互換性を認定する試験ではない。本番サーバーは変更していない。
+
+このharnessは停止済みの使い捨て比較サーバーを別ディレクトリへコピーし、loopbackのみの
+network namespaceを必須にする。コピーだけをoffline RakNetにし、復旧後もpackage indexを使わない。
+保持した旧Python環境には全プラグイン依存が必要。起動できない場合は試験を失敗と記録し再度復旧する。
+`python tests/runtime_world_rollback.py --help`で必要なFork SHA・Mojangアーカイブ・metadataを確認できる。
 
 Wingsのインストール用コンテナはイメージのENTRYPOINTを残してCMDに`bash /mnt/install/install.sh`を渡す。
 ENTRYPOINTではこの固定スクリプトを実行し、通常起動と分ける。`tests/test_install_entrypoint.sh`が
