@@ -30,6 +30,18 @@ CHECKS = {"native_abi", "boot", "commands", "scheduler", "world_save_restart", "
           "block_entity", "network", "plugins", "docker", "wings"}
 HEX = re.compile(r"[0-9a-f]{64}")
 REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+")
+RELAY_PATH = Path("plugins/friend_join/bin/endstone-friend-bridge")
+
+
+def plugin_assets(manifest):
+    return [*manifest.get("plugins", []), *([manifest["relay"]] if manifest.get("relay") else [])]
+
+
+def check_relay(path):
+    with path.open("rb") as stream:
+        header = stream.read(20)
+    if len(header) != 20 or header[:6] != b"\x7fELF\x02\x01" or header[18:20] != b"\x3e\x00":
+        raise ValueError("Relay must be Linux x86-64 ELF")
 
 
 def now():
@@ -91,7 +103,8 @@ def validate_manifest(data, repository, bds_version, channel="stable"):
     if channel == "stable" and (checks.get("commit") != data["commit"] or
                                 any(checks.get("checks", {}).get(key) != "passed" for key in CHECKS)):
         raise ValueError("Stable release is missing required runtime checks for this commit")
-    artifacts = [data.get("wheel", {}), data["bds"], *data.get("plugins", [])]
+    extras = plugin_assets(data)
+    artifacts = [data.get("wheel", {}), data["bds"], *extras]
     wheel_name = data.get("wheel", {}).get("filename", "")
     if not re.fullmatch(rf"endstone-[A-Za-z0-9_.+]+-{python_tag}-{python_tag}-manylinux_[A-Za-z0-9_]*x86_64\.whl", wheel_name):
         raise ValueError("Expected a Fork Linux x86-64 wheel matching the container Python ABI")
@@ -106,20 +119,26 @@ def validate_manifest(data, repository, bds_version, channel="stable"):
             if parsed.hostname != "www.minecraft.net" or not parsed.path.startswith("/bedrockdedicatedserver/bin-linux/"):
                 raise ValueError("BDS artifact must use Mojang's Linux release endpoint")
         else:
-            expected_repo = item.get("repository", repository) if item in data.get("plugins", []) else repository
+            expected_repo = item.get("repository", repository) if item in extras else repository
             if not REPO.fullmatch(expected_repo) or expected_repo.lower().startswith("endstonemc/"):
                 raise ValueError("Invalid Fork/plugin artifact repository")
             if parsed.hostname != "github.com" or not parsed.path.startswith(f"/{expected_repo}/releases/download/"):
                 raise ValueError("Endstone and plugin artifacts must come from the configured repositories")
-        if item in data.get("plugins", []):
+        if item in extras:
             name = item.get("filename", "")
-            if safe_relative(name).name != name or not name.endswith(".whl") or name in plugin_names:
+            relay = item is data.get("relay")
+            if safe_relative(name).name != name or (not relay and not name.endswith(".whl")) or name in plugin_names:
                 raise ValueError("Invalid or duplicate plugin wheel name")
+            if relay and (name != RELAY_PATH.name or item.get("platform") != "linux-x86_64"):
+                raise ValueError("Unsupported relay filename or platform")
             if type(item.get("private", False)) is not bool:
                 raise ValueError("Plugin private flag must be a boolean")
             if item.get("private") and not item.get("repository"):
                 raise ValueError("Private plugins require an explicit repository")
             plugin_names.add(name)
+    friend_join = any(item["filename"].startswith("endstone_friend_join-") for item in data.get("plugins", []))
+    if bool(data.get("relay")) != friend_join:
+        raise ValueError("FriendJoin Wheel and relay must be updated together")
     return data
 
 
@@ -196,7 +215,7 @@ class Manager:
         # release URL. Never accept an arbitrary authenticated URL from a manifest.
         match = re.fullmatch(r"/" + re.escape(repository) + r"/releases/download/([A-Za-z0-9_.+-]+)/([^/]+)", urlparse(item["url"]).path)
         if not match or match[2] != item["filename"]:
-            raise ValueError("Private plugin URL must identify its exact release and wheel")
+            raise ValueError("Private plugin URL must identify its exact release and asset")
         api = f"https://api.github.com/repos/{repository}/releases/tags/{quote(match[1], safe='')}"
         request = urllib.request.Request(api, headers={"Accept": "application/vnd.github+json", "User-Agent": "Ymii-Endstone-Fork/1",
                                                        "X-GitHub-Api-Version": "2022-11-28"})
@@ -350,6 +369,11 @@ class Manager:
                 self.plugin_artifact(item, path)
                 subprocess.run([str(python), "-m", "pip", "install", "--constraint", str(constraints), str(path)], check=True)
                 plugins.append(path)
+            if manifest.get("relay"):
+                item = manifest["relay"]
+                relay = stage / item["filename"]
+                self.plugin_artifact(item, relay)
+                check_relay(relay)
         return stage, python, plugins
 
     def apply(self, manifest, manifest_hash, stage, python, plugins):
@@ -387,6 +411,15 @@ class Manager:
                 for old in plugin_dir.glob(distribution + "-*.whl"):
                     old.unlink()
                 shutil.copy2(source, plugin_dir / source.name)
+            if manifest.get("relay"):
+                relay = stage / manifest["relay"]["filename"]
+                if digest(relay) != manifest["relay"]["sha256"]:
+                    raise ValueError("Staged relay SHA256 changed")
+                check_relay(relay)
+                destination = self.root / RELAY_PATH
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(relay, destination)
+                destination.chmod(0o755)
             candidate = {"manifest": manifest, "manifest_sha256": manifest_hash, "python": str(python),
                          "installed_at": now(), "bds_files": bds_files, "backup": str(backup)}
             if self.serve(candidate, health_trial=True) != 0:
@@ -504,7 +537,7 @@ class Manager:
         manifest = json.loads(path.read_text("utf-8"))
         validate_manifest(manifest, repository, os.environ.get("BDS_VERSION", "1.26.60"), channel)
         allowed_plugins = {name.strip() for name in os.environ.get("PLUGIN_REPOSITORIES", "").split(",") if name.strip()}
-        if any(item.get("repository", repository) not in allowed_plugins for item in manifest.get("plugins", [])):
+        if any(item.get("repository", repository) not in allowed_plugins for item in plugin_assets(manifest)):
             raise ValueError("Plugin release repository must be explicitly listed in PLUGIN_REPOSITORIES")
         return manifest, digest(path)
 
@@ -560,7 +593,7 @@ def main():
                 else:
                     if not bool_env("BACKUP_BEFORE_UPDATE"):
                         raise ValueError("Backup is mandatory; BACKUP_BEFORE_UPDATE must be true")
-                    if manifest.get("plugins") and not bool_env("AUTO_UPDATE_PLUGINS"):
+                    if plugin_assets(manifest) and not bool_env("AUTO_UPDATE_PLUGINS"):
                         raise ValueError("Release contains plugin updates; cannot keep a mixed unverified plugin set")
                     stage, python, plugins = manager.stage(manifest, checksum)
                     manager.apply(manifest, checksum, stage, python, plugins)

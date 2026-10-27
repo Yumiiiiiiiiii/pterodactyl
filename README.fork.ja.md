@@ -85,7 +85,15 @@ Wingsの実行UIDはノードごとに確認する。秘密トークンをEgg変
 まだプラグインReleaseを作成・配布していない。
 実CIはprivateリポジトリの`.github/workflows/private-plugins.yml`で、Endstoneの完全SHAに固定する。
 
-Friend JoinのGo helper、Xboxログイン、NetherNetの実接続はプラグインWheelのビルドとは別に必要。
+FriendJoinを含むmanifestには、同じ検証済み組み合わせの`relay`も必須。
+private側の`plugin-release.json`の`plugins`と`relay`を実機証拠へ含めると、Endstoneのmanifestにも引き継ぐ。
+relayは`filename=endstone-friend-bridge`、`platform=linux-x86_64`、`url`、`sha256`、
+`repository`、必要なら`private=true`を指定する。Wheelと同じ許可先・認証・hash照合を使い、
+ELF形式を確認して`/home/container/plugins/friend_join/bin/endstone-friend-bridge`へ0755で配置する。
+health trialより前に配置し、失敗時はworld・Wheelとともに旧relayとその権限を戻す。
+既存の`config.toml`、ログインキャッシュ、`binary_path`やtransport設定は保持する。
+既定以外の`binary_path`を設定した環境は、管理者がこの配置先との整合性を確認する。
+Xboxログイン、NetherNetの実接続は別途検証が必要。
 Vanishのprotocol 2193制限は未検証の新protocolへ拡張しない。
 
 ## 試験
@@ -99,7 +107,8 @@ docker build --target installer -t endstone-wings:installer-test .
 bash tests/test_install_entrypoint.sh endstone-wings:installer-test
 ```
 
-ローカルの15件は認証境界とオフライン故障注入試験。実際の新BDSの起動に合格した証拠ではない。
+ローカルの20件は認証境界とオフライン故障注入試験。relayの実行権限・配置・改ざん拒否と
+旧world/Wheel/relayの同時復旧も含む。実際の新BDSの起動に合格した証拠ではない。
 GH ActionsのDockerジョブも、オフライン管理コードの試験とBDS/Wingsの実機試験を区別する。
 
 別途、新設検証用Wingsサーバー538ad142ではBDS1.26.52の不正ELF・プラグインを注入し、
