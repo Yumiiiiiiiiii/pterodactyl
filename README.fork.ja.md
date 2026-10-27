@@ -84,3 +84,7 @@ docker build -t endstone-wings:test .
 
 ローカルの9件はオフライン故障注入試験。実際の新BDSの起動やWingsの復旧に合格した証拠ではない。
 GH ActionsのDockerジョブも、オフライン管理コードの試験とBDS/Wingsの実機試験を区別する。
+
+Wingsのインストール用コンテナはイメージのENTRYPOINTを残してCMDに`bash /mnt/install/install.sh`を渡す。
+ENTRYPOINTではこの固定スクリプトを実行し、通常起動と分ける。`tests/test_install_entrypoint.sh`が
+実際のDocker引数とネットワークなしのコンテナでこの経路を検証する。

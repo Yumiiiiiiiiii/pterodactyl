@@ -46,6 +46,7 @@ jobs:
             --workdir /tmp endstone-wings:test -m unittest discover -s tests -v
           docker run --rm --entrypoint bash endstone-wings:test -c \
             'test "$(id -u)" = 1000 && test "$PWD" = /home/container && python /opt/endstone-fork/manager.py --help'
+          bash tests/test_install_entrypoint.sh endstone-wings:test
       - uses: actions/upload-artifact@v7
         with:
           name: fork-egg-${{ github.sha }}
