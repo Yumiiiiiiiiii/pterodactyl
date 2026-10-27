@@ -67,12 +67,23 @@ python /opt/endstone-fork/manager.py rollback --backup /home/container/.fork/bac
 
 ## プラグインとprivateソース
 
-既存プラグインは公開Forkへコミットしない。承認済みの専用privateリポジトリを作成した。
-private側の初回pushは別途確認してから行う。
+既存プラグインは公開Forkへコミットしない。承認済みの専用privateリポジトリ
+`Yumiiiiiiiiii/endstone-private-plugins`へ、承認されたコミット96380b36をpushした。
 `PLUGIN_REPOSITORIES`は許可する配布先の`owner/repo`をカンマで指定する。
 manifestにはWheel名・配布先・SHA256を記録し、Endstoneと同時に更新・復旧する。
-認証が必要なprivate Releaseの直接ダウンロードは現段階では未対応。秘密トークンをEgg変数へ入力しない。
-private CIテンプレートはEndstone Forkの`fork/private-plugin-ci.yml.example`を参照する。
+private Releaseの場合は、manifestの各プラグイン項目へ`"private": true`と明示的な`repository`を指定する。
+`url`は通常の`https://github.com/<owner>/<repo>/releases/download/<tag>/<wheel名>`で、SHA256も必須。
+管理者がサーバー停止中に`.fork/credentials/github-token`へ、そのリポジトリだけにContents: read権限を
+持つfine-grained PATを配置する。ファイルはコンテナの実行UID所有・0600、ディレクトリは0700とする。
+Wingsの実行UIDはノードごとに確認する。秘密トークンをEgg変数・引数・manifest・イメージへ入力しない。
+パネルのファイル一覧にもこのパスを許可しない（Eggのfile_denylistに設定済み）。
+
+管理コードは許可リポジトリの公開済みReleaseから名前が一意のasset IDを取得し、GitHub API経由で
+取得する。トークンはapi.github.comだけに送り、署名付きダウンロード先へのredirectから除去する。
+取得後にSHA256を照合する。認証ファイルはバックアップ・配布物へ含めない。
+この経路はLinuxコンテナのダミー認証試験で検証する。実private Releaseによる取得は未検証で、
+まだプラグインReleaseを作成・配布していない。
+実CIはprivateリポジトリの`.github/workflows/private-plugins.yml`で、Endstoneの完全SHAに固定する。
 
 Friend JoinのGo helper、Xboxログイン、NetherNetの実接続はプラグインWheelのビルドとは別に必要。
 Vanishのprotocol 2193制限は未検証の新protocolへ拡張しない。
@@ -88,8 +99,12 @@ docker build --target installer -t endstone-wings:installer-test .
 bash tests/test_install_entrypoint.sh endstone-wings:installer-test
 ```
 
-ローカルの9件はオフライン故障注入試験。実際の新BDSの起動やWingsの復旧に合格した証拠ではない。
+ローカルの15件は認証境界とオフライン故障注入試験。実際の新BDSの起動に合格した証拠ではない。
 GH ActionsのDockerジョブも、オフライン管理コードの試験とBDS/Wingsの実機試験を区別する。
+
+別途、新設検証用Wingsサーバー538ad142ではBDS1.26.52の不正ELF・プラグインを注入し、
+実health trialの失敗後に3,268ファイルとcurrent状態の完全復旧を確認した。
+26.60へのワールド形式移行・復旧は未検証。既存の本番サーバーは変更していない。
 
 Wingsのインストール用コンテナはイメージのENTRYPOINTを残してCMDに`bash /mnt/install/install.sh`を渡す。
 ENTRYPOINTではこの固定スクリプトを実行し、通常起動と分ける。`tests/test_install_entrypoint.sh`が

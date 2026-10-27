@@ -24,6 +24,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
+from urllib.parse import quote
 
 CHECKS = {"native_abi", "boot", "commands", "scheduler", "world_save_restart", "player_events",
           "block_entity", "network", "plugins", "docker", "wings"}
@@ -114,18 +115,41 @@ def validate_manifest(data, repository, bds_version, channel="stable"):
             name = item.get("filename", "")
             if safe_relative(name).name != name or not name.endswith(".whl") or name in plugin_names:
                 raise ValueError("Invalid or duplicate plugin wheel name")
+            if type(item.get("private", False)) is not bool:
+                raise ValueError("Plugin private flag must be a boolean")
+            if item.get("private") and not item.get("repository"):
+                raise ValueError("Private plugins require an explicit repository")
             plugin_names.add(name)
     return data
 
 
-def fetch(url, path, sha256=None):
+class DownloadRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        if urlparse(newurl).scheme != "https":
+            raise ValueError("Download redirected outside HTTPS")
+        redirected = super().redirect_request(request, fp, code, msg, headers, newurl)
+        # GitHub redirects private assets to a signed object-storage URL. The
+        # repository credential must never accompany that redirect.
+        if redirected is not None:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+def fetch(url, path, sha256=None, *, github_token=None):
     if sha256 and path.is_file() and digest(path) == sha256:
         return
     if urlparse(url).scheme != "https":
         raise ValueError("Only HTTPS downloads are permitted")
     request = urllib.request.Request(url, headers={"User-Agent": "Ymii-Endstone-Fork/1"})
+    if github_token:
+        if urlparse(url).hostname != "api.github.com":
+            raise ValueError("GitHub credentials are restricted to api.github.com")
+        request.add_unredirected_header("Authorization", "Bearer " + github_token)
+        request.add_header("Accept", "application/octet-stream")
+        request.add_header("X-GitHub-Api-Version", "2022-11-28")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(request, timeout=60) as response, path.open("wb") as stream:
+    opener = urllib.request.build_opener(DownloadRedirect())
+    with opener.open(request, timeout=60) as response, path.open("wb") as stream:
         if urlparse(response.url).scheme != "https":
             raise ValueError("Download redirected outside HTTPS")
         shutil.copyfileobj(response, stream, 1024 * 1024)
@@ -143,6 +167,51 @@ class Manager:
 
     def current(self):
         return json.loads(self.state_path.read_text("utf-8")) if self.state_path.exists() else None
+
+    def plugin_artifact(self, item, path):
+        if not item.get("private", False):
+            return fetch(item["url"], path, item["sha256"])
+        repository = item["repository"]
+        allowed = {value.strip() for value in os.environ.get("PLUGIN_REPOSITORIES", "").split(",") if value.strip()}
+        if repository not in allowed:
+            raise ValueError("Private plugin repository is not allowed")
+        parsed = urlparse(item["url"])
+        if not REPO.fullmatch(repository) or parsed.scheme != "https" or parsed.hostname != "github.com" or parsed.query or parsed.fragment:
+            raise ValueError("Invalid private plugin release URL")
+        # Credentials are operator-provisioned files, never Egg variables,
+        # manifests, image layers, environment variables or command arguments.
+        folder = self.control / "credentials"
+        credential = folder / "github-token"
+        if folder.is_symlink() or credential.is_symlink():
+            raise ValueError("GitHub credential paths must not be symlinks")
+        descriptor = os.open(credential, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "r", encoding="ascii") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or (os.name == "posix" and (info.st_mode & 0o077 or info.st_uid != os.getuid())):
+                raise ValueError("GitHub credential must be owned by the container user with mode 0600")
+            token = stream.read(1025).strip()
+        if not re.fullmatch(r"[A-Za-z0-9_]{20,1024}", token):
+            raise ValueError("Invalid GitHub credential file")
+        # Resolve an asset ID within the allowlisted repository and the exact
+        # release URL. Never accept an arbitrary authenticated URL from a manifest.
+        match = re.fullmatch(r"/" + re.escape(repository) + r"/releases/download/([A-Za-z0-9_.+-]+)/([^/]+)", urlparse(item["url"]).path)
+        if not match or match[2] != item["filename"]:
+            raise ValueError("Private plugin URL must identify its exact release and wheel")
+        api = f"https://api.github.com/repos/{repository}/releases/tags/{quote(match[1], safe='')}"
+        request = urllib.request.Request(api, headers={"Accept": "application/vnd.github+json", "User-Agent": "Ymii-Endstone-Fork/1",
+                                                       "X-GitHub-Api-Version": "2022-11-28"})
+        request.add_unredirected_header("Authorization", "Bearer " + token)
+        with urllib.request.build_opener(DownloadRedirect()).open(request, timeout=30) as response:
+            if response.url != api:
+                raise ValueError("Private release metadata redirected; confirm repository ownership")
+            release = json.load(response)
+        if release.get("draft") is not False or release.get("tag_name") != match[1]:
+            raise ValueError("Private plugin release must be published with the exact tag")
+        assets = [asset for asset in release.get("assets", []) if asset.get("name") == item["filename"]]
+        if len(assets) != 1 or type(assets[0].get("id")) is not int or assets[0]["id"] <= 0:
+            raise ValueError("Private plugin release asset is missing or ambiguous")
+        asset_url = f"https://api.github.com/repos/{repository}/releases/assets/{assets[0]['id']}"
+        fetch(asset_url, path, item["sha256"], github_token=token)
 
     @contextlib.contextmanager
     def lock(self):
@@ -278,7 +347,7 @@ class Manager:
         if bool_env("AUTO_UPDATE_PLUGINS"):
             for item in manifest.get("plugins", []):
                 path = stage / "plugin-wheels" / item["filename"]
-                fetch(item["url"], path, item["sha256"])
+                self.plugin_artifact(item, path)
                 subprocess.run([str(python), "-m", "pip", "install", "--constraint", str(constraints), str(path)], check=True)
                 plugins.append(path)
         return stage, python, plugins
