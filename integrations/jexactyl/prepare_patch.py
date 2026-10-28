@@ -28,6 +28,6 @@ args.output.mkdir(parents=True, exist_ok=True)
 (args.output / "StartupModificationService.original.php").write_text(before, encoding="utf-8", newline="\n")
 (args.output / "StartupModificationService.fixed.php").write_text(after, encoding="utf-8", newline="\n")
 patch = "".join(difflib.unified_diff(before.splitlines(True), after.splitlines(True),
-    fromfile="a/" + relative, tofile="b/" + relative))
+    fromfile="a/" + relative, tofile="b/" + relative, n=1))
 (args.output / "startup-default.patch").write_text(patch, encoding="utf-8", newline="\n")
 print("Prepared backend-only patch; installed panel unchanged")
