@@ -17,6 +17,13 @@
 4. Fork、stableチャンネル、BDS版を確認して起動する。
    privateプラグインを更新する場合は許可リポジトリと認証ファイルも事前に設定する。
 
+実JexactylではEgg変更時の空Startupが旧コマンドへ戻る不具合を確認した。
+この不具合があるパネルでは上記の既定Startup適用、または
+[PHPサービス修正](integrations/jexactyl/README.ja.md) が必要。
+検証対象のJexactylには明示承認後に修正を適用済み。
+実Laravelサービスで空欄から新Eggの起動コマンドを保存し、Wingsへ渡ることを確認した。
+画面からの最終再操作はブラウザーツールのURL安全判定による停止のため未検証。
+
 既定値は `ENDSTONE_FORK=Yumiiiiiiiiii/endstone`、`ENDSTONE_RELEASE=stable`、
 `UPDATE_CHANNEL=stable`、`BDS_VERSION=1.26.60`。
 初回移行とBDSの更新は一度に行いません。既存BDSと同じ実ビルドの検証済みReleaseが必要です。
@@ -69,6 +76,11 @@ Linuxで管理コード38試験を実施。公式Python3.14 Docker/UID1000上で
 公式版再起動を確認しました。これは26.52.3での比較試験です。
 ローカル成果物を使い、stable検証結果の偽装はしていません。
 `tests/runtime_official_migration.py`で再現でき、privateソースは必要ありません。
+
+Fork Actionsでも38試験、両Egg JSON、Docker、公式Python3.14でのbootstrapに合格。
+実Wingsには同じCI成果物の起動コマンドを渡し、独立Python導入と、未対応BDS設定の起動前拒否を確認した。
+この時、既存3,270ファイルはSHA256で変更なし。実Wingsでの移行成功を示す結果ではなく、安全な拒否の試験。
+開発用サーバーは比較試験前の設定へ戻し、停止した。通常利用のサーバーは変更していない。
 
 外部DBはファイルsnapshotだけでは一貫して戻せません。既知のDiscord SQL/JDBC設定は拒否しますが、
 任意の第三者プラグインの外部保存先を一般に検出できるわけではありません。

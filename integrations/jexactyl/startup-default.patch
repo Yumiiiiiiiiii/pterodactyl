@@ -1,0 +1,15 @@
+--- a/app/Services/Servers/StartupModificationService.php
++++ b/app/Services/Servers/StartupModificationService.php
+@@ -77,6 +77,12 @@
+                 'egg_id' => $egg->id,
+                 'nest_id' => $egg->nest_id,
+             ]);
++
++            // A blank startup means the selected Egg's default. Laravel converts
++            // the UI's empty string to null before this service receives it.
++            if (!isset($data['startup']) || trim((string) $data['startup']) === '') {
++                $data['startup'] = $egg->startup;
++            }
+         }
+ 
+         $server->fill([
