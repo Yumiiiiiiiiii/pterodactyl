@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -178,14 +179,34 @@ def fetch(url, path, sha256=None, *, github_token=None):
 
 
 class Manager:
+    file_digest = staticmethod(digest)
+    write_json = staticmethod(atomic_json)
+    timestamp = staticmethod(now)
+
     def __init__(self, root: Path):
         self.root = root.resolve()
         self.control = self.root / ".fork"
+        if self.control.is_symlink():
+            raise ValueError("Control directory must not be a symlink")
         self.control.mkdir(parents=True, exist_ok=True)
         self.state_path = self.control / "current.json"
 
     def current(self):
         return json.loads(self.state_path.read_text("utf-8")) if self.state_path.exists() else None
+
+    def migrate_official(self, manifest, checksum):
+        return self.migration_module().migrate(self, manifest, checksum)
+
+    def migration_module(self):
+        spec = importlib.util.spec_from_file_location("official_migration", Path(__file__).with_name("migration.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def serve_original(self, reason):
+        original = self.migration_module().inventory(self)
+        print(f"Fork migration not applied: {reason}. Starting the verified original official runtime.", flush=True)
+        return self.serve(original)
 
     def plugin_artifact(self, item, path):
         if not item.get("private", False):
@@ -235,6 +256,21 @@ class Manager:
     @contextlib.contextmanager
     def lock(self):
         path = self.control / "manager.lock"
+        if sys.platform == "linux":
+            import fcntl
+            descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            try:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise RuntimeError("Another manager is active") from None
+                os.ftruncate(descriptor, 0)
+                os.write(descriptor, str(os.getpid()).encode())
+                self.assert_stopped()
+                yield
+            finally:
+                os.close(descriptor)
+            return
         try:
             descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
@@ -248,8 +284,13 @@ class Manager:
             path.unlink(missing_ok=True)
 
     def assert_stopped(self):
-        if (self.control / "server.pid").exists():
-            raise RuntimeError("Server PID marker exists; refuse to update a running or uncleanly stopped server")
+        marker = self.control / "server.pid"
+        if marker.exists():
+            recorded = marker.read_text("ascii").strip()
+            if sys.platform == "linux" and recorded.isdigit() and int(recorded) > 1 and not Path("/proc", recorded).exists():
+                marker.unlink()
+            else:
+                raise RuntimeError("Server PID marker exists; refuse to update a running or uncleanly stopped server")
         if sys.platform == "linux":
             for entry in Path("/proc").iterdir():
                 if not entry.name.isdigit() or int(entry.name) == os.getpid():
@@ -350,25 +391,40 @@ class Manager:
             raise FileExistsError("Candidate venv exists from an earlier attempt; preserve and remove it before retry")
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
         python = venv / "bin/python"
-        subprocess.run([str(python), "-m", "pip", "install", str(wheel)], check=True)
         constraints = venv / "fork-constraints.txt"
         constraints.write_text(f"endstone=={manifest['endstone_version']}\n", encoding="utf-8")
+        env = os.environ.copy()
+        for key in ("PYTHONPATH", "PYTHONHOME", "PIP_TARGET", "PIP_PREFIX", "PIP_USER", "PYTHONUSERBASE"):
+            env.pop(key, None)
+        env["PYTHONNOUSERSITE"] = "1"
+        env["PIP_CONSTRAINT"] = str(constraints)
+        subprocess.run([str(python), "-I", "-m", "pip", "install", str(wheel)], env=env, check=True)
         installed = subprocess.check_output([str(python), "-c", "import importlib.metadata as m; print(m.version('endstone'))"],
-                                            text=True).strip()
+                                            env=env, text=True).strip()
         if installed != manifest["endstone_version"]:
             raise ValueError("Installed Endstone version does not match manifest")
         native = subprocess.check_output([str(python), "-c", "from endstone import __minecraft_version__; print(__minecraft_version__)"],
-                                         cwd=stage, text=True).strip()
+                                         env=env, cwd=stage, text=True).strip()
         native = native if native.startswith("1.") else "1." + native
         if native != manifest["bds"]["version"]:
             raise ValueError("Wheel native ABI target does not match requested BDS")
         plugins = []
         if bool_env("AUTO_UPDATE_PLUGINS"):
+            distributions = []
             for item in manifest.get("plugins", []):
                 path = stage / "plugin-wheels" / item["filename"]
+                distribution = path.name.split("-")[0]
+                if not re.fullmatch(r"endstone_[A-Za-z0-9_]+", distribution):
+                    raise ValueError("Plugin Wheel must use an endstone_ distribution name")
                 self.plugin_artifact(item, path)
-                subprocess.run([str(python), "-m", "pip", "install", "--constraint", str(constraints), str(path)], check=True)
+                subprocess.run([str(python), "-I", "-m", "pip", "install", "--constraint", str(constraints), str(path)], env=env, check=True)
                 plugins.append(path)
+                distributions.append(distribution.replace("_", "-"))
+            # Resolve dependencies up front, but let Endstone install/load each
+            # plugin from plugins/*.whl exactly once. Keeping its entry point in
+            # the venv as well causes duplicate plugin registration at startup.
+            if distributions:
+                subprocess.run([str(python), "-I", "-m", "pip", "uninstall", "-y", *distributions], env=env, check=True)
             if manifest.get("relay"):
                 item = manifest["relay"]
                 relay = stage / item["filename"]
@@ -404,22 +460,7 @@ class Manager:
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, destination)
             (self.root / "version.txt").write_text(manifest["bds"]["version"].removeprefix("1."), encoding="utf-8")
-            plugin_dir = self.root / "plugins"
-            plugin_dir.mkdir(exist_ok=True)
-            for source in plugins:
-                distribution = source.name.split("-")[0]
-                for old in plugin_dir.glob(distribution + "-*.whl"):
-                    old.unlink()
-                shutil.copy2(source, plugin_dir / source.name)
-            if manifest.get("relay"):
-                relay = stage / manifest["relay"]["filename"]
-                if digest(relay) != manifest["relay"]["sha256"]:
-                    raise ValueError("Staged relay SHA256 changed")
-                check_relay(relay)
-                destination = self.root / RELAY_PATH
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(relay, destination)
-                destination.chmod(0o755)
+            self.install_plugins(manifest, stage, plugins)
             candidate = {"manifest": manifest, "manifest_sha256": manifest_hash, "python": str(python),
                          "installed_at": now(), "bds_files": bds_files, "backup": str(backup)}
             if self.serve(candidate, health_trial=True) != 0:
@@ -432,21 +473,80 @@ class Manager:
                 atomic_json(self.control / "transaction.json", {"state": "rolled_back", "backup": str(backup)})
             raise
 
+    def install_plugins(self, manifest, stage, plugins):
+        plugin_dir = self.root / "plugins"
+        plugin_dir.mkdir(exist_ok=True)
+        for source in plugins:
+            distribution = source.name.split("-")[0]
+            for old in plugin_dir.glob(distribution + "-*.whl"):
+                old.unlink()
+            shutil.copy2(source, plugin_dir / source.name)
+        if manifest.get("relay"):
+            relay = stage / manifest["relay"]["filename"]
+            if digest(relay) != manifest["relay"]["sha256"]:
+                raise ValueError("Staged relay SHA256 changed")
+            check_relay(relay)
+            destination = self.root / RELAY_PATH
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(relay, destination)
+            destination.chmod(0o755)
+
+    @contextlib.contextmanager
+    def trial_access(self):
+        paths = [self.root / "server.properties", self.root / "allowlist.json"]
+        original = {path: path.read_bytes() if path.exists() else None for path in paths}
+        try:
+            lines = paths[0].read_text("utf-8-sig").splitlines()
+            keys = {"allow-list", "online-mode", "enable-lan-visibility"}
+            lines = [line for line in lines if line.split("=", 1)[0].strip() not in keys]
+            paths[0].write_text("\n".join([*lines, "allow-list=true", "online-mode=true", "enable-lan-visibility=false"]) + "\n", encoding="utf-8")
+            paths[1].write_text("[]\n", encoding="utf-8")
+            yield
+        finally:
+            for path, raw in original.items():
+                if raw is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(raw)
+
     def serve(self, state, health_trial=False):
+        if health_trial and state.get("migration"):
+            with self.trial_access():
+                return self._serve(state, health_trial=True)
+        return self._serve(state, health_trial)
+
+    def _serve(self, state, health_trial=False):
         marker = self.control / "server.pid"
         logdir = self.control / "logs"
         logdir.mkdir(exist_ok=True)
         log = logdir / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:6] + ".log")
         env = os.environ.copy()
+        for key in ("PYTHONPATH", "PYTHONHOME", "PIP_TARGET", "PIP_PREFIX", "PIP_USER"):
+            env.pop(key, None)
+        if state.get("kind") == "official":
+            env.pop("PYTHONNOUSERSITE", None)
+            env.pop("PIP_CONSTRAINT", None)
+        else:
+            env["PYTHONNOUSERSITE"] = "1"
         env["ENDSTONE_PYTHON_EXECUTABLE"] = state["python"]
-        env["PIP_CONSTRAINT"] = str(Path(state["python"]).parent.parent / "fork-constraints.txt")
-        process = subprocess.Popen([state["python"], "-m", "endstone", "-s", str(self.root), "-y", "--no-interactive"],
+        if state.get("kind") != "official":
+            env["PIP_CONSTRAINT"] = str(Path(state["python"]).parent.parent / "fork-constraints.txt")
+        # Standalone CPython keeps /install/lib in sysconfig after relocation.
+        # Endstone's Linux launcher uses LIBDIR for the preloaded native runtime;
+        # resolve it within this interpreter without altering the verified Wheel.
+        launch = ("import runpy,sys,sysconfig;from pathlib import Path;"
+                  "lib=Path(sys.base_prefix)/'lib';cfg=sysconfig.get_config_vars();"
+                  "cfg.update(LIBDIR=str(lib)) if not Path(str(cfg.get('LIBDIR'))).is_dir() "
+                  "and (lib/str(cfg.get('LDLIBRARY'))).is_file() else None;"
+                  "runpy.run_module('endstone',run_name='__main__')")
+        process = subprocess.Popen([state["python"], "-c", launch, "-s", str(self.root), "-y", "--no-interactive"],
                                    cwd=self.root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         marker.write_text(str(process.pid), encoding="ascii")
         started = threading.Event()
         failed = threading.Event()
         stopped = threading.Event()
+        interrupted = threading.Event()
         previous_handlers = {}
 
         def stop(*_):
@@ -484,12 +584,16 @@ class Manager:
                     except OSError:
                         break
 
+        def external_stop(*_):
+            interrupted.set()
+            stop()
+
         thread = threading.Thread(target=output, daemon=True)
         thread.start()
         if not health_trial:
             threading.Thread(target=forward_input, daemon=True).start()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            previous_handlers[sig] = signal.signal(sig, stop)
+            previous_handlers[sig] = signal.signal(sig, external_stop)
         try:
             if health_trial:
                 deadline = time.monotonic() + 180
@@ -507,6 +611,8 @@ class Manager:
                     process.kill()
                     process.wait(timeout=10)
                 thread.join(timeout=5)
+                if interrupted.is_set():
+                    raise InterruptedError("Migration trial was stopped by the panel")
                 return 0 if healthy and not failed.is_set() and process.returncode == 0 else 1
             return process.wait()
         finally:
@@ -550,6 +656,15 @@ def main():
     args = parser.parse_args()
     manager = Manager(args.root)
     with manager.lock():
+        migration_path = manager.control / "migration.json"
+        if bool_env("MIGRATE_OFFICIAL", False) and args.action == "start" and migration_path.exists():
+            receipt = json.loads(migration_path.read_text("utf-8"))
+            if receipt["state"] in {"preparing", "applying"}:
+                manager.restore(Path(receipt["backup"]))
+                receipt["state"] = "rolled_back"
+                atomic_json(migration_path, receipt)
+            if receipt["state"] == "rolled_back" and manager.current() is None:
+                return manager.serve_original("Previous migration was restored")
         transaction = manager.control / "transaction.json"
         if transaction.exists() and json.loads(transaction.read_text())["state"] == "applying" and args.action != "rollback":
             raise RuntimeError("Interrupted update found. Roll back the recorded snapshot before starting")
@@ -560,6 +675,11 @@ def main():
             if not args.backup:
                 parser.error("rollback requires --backup")
             manager.restore(args.backup)
+            if migration_path.exists():
+                receipt = json.loads(migration_path.read_text("utf-8"))
+                if receipt.get("backup") == str(args.backup):
+                    receipt["state"] = "rolled_back"
+                    atomic_json(migration_path, receipt)
             atomic_json(transaction, {"state": "rolled_back", "backup": str(args.backup)})
             return 0
         current = manager.current()
@@ -571,6 +691,8 @@ def main():
                 if current and args.action == "start":
                     print(f"Update check failed; keeping installed release: {exc}", flush=True)
                     manifest, checksum = None, None
+                elif bool_env("MIGRATE_OFFICIAL", False) and args.action == "start":
+                    return manager.serve_original("No compatible verified Fork release is available")
                 else:
                     raise
             if manifest and (not current or current["manifest_sha256"] != checksum):
@@ -595,8 +717,20 @@ def main():
                         raise ValueError("Backup is mandatory; BACKUP_BEFORE_UPDATE must be true")
                     if plugin_assets(manifest) and not bool_env("AUTO_UPDATE_PLUGINS"):
                         raise ValueError("Release contains plugin updates; cannot keep a mixed unverified plugin set")
-                    stage, python, plugins = manager.stage(manifest, checksum)
-                    manager.apply(manifest, checksum, stage, python, plugins)
+                    if not current and bool_env("MIGRATE_OFFICIAL", False):
+                        try:
+                            manager.migrate_official(manifest, checksum)
+                        except Exception as exc:
+                            if isinstance(exc, InterruptedError):
+                                return 0
+                            # Restore failure must never start either runtime.
+                            receipt = json.loads(migration_path.read_text("utf-8")) if migration_path.exists() else None
+                            if receipt is None or receipt["state"] == "rolled_back":
+                                return manager.serve_original(str(exc))
+                            raise
+                    else:
+                        stage, python, plugins = manager.stage(manifest, checksum)
+                        manager.apply(manifest, checksum, stage, python, plugins)
                     current = manager.current()
         if args.action == "start":
             if not current:

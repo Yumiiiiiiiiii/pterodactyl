@@ -1,6 +1,11 @@
 """Generate the Fork Egg without changing the panel's existing UI components."""
 
 import json
+import base64
+import hashlib
+import io
+import shlex
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -45,6 +50,40 @@ def main():
     egg["config"]["startup"] = json.dumps({"done": "Server started."})
     egg["exported_at"] = "2026-10-28T00:00:00+09:00"
     (ROOT / "egg-endstone-fork.json").write_text(json.dumps(egg, ensure_ascii=False, indent=4) + "\n", encoding="utf-8")
+    # A self-contained startup works with the existing official image. No
+    # custom image, git clone, shell downloader or reinstall is required.
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for name in ("manager.py", "migration.py", "portable.py", "python-runtime.json"):
+            entry = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            bundle.writestr(entry, (ROOT / "runtime" / name).read_bytes().replace(b"\r\n", b"\n"))
+    encoded = base64.b64encode(payload.getvalue()).decode("ascii")
+    checksum = hashlib.sha256(payload.getvalue()).hexdigest()
+    boot = ("import base64,hashlib,io,os,sys,zipfile;from pathlib import Path;"
+            f"data=base64.b64decode('{encoded}');assert hashlib.sha256(data).hexdigest()=='{checksum}';"
+            "root=Path.cwd();control=root/'.fork';assert not control.is_symlink();"
+            f"folder=control/'bootstrap'/'{checksum}';"
+            "assert not any(p.is_symlink() for p in [control/'bootstrap',folder]);folder.mkdir(parents=True,exist_ok=True);"
+            "z=zipfile.ZipFile(io.BytesIO(data));"
+            "assert not any((folder/n).is_symlink() for n in z.namelist());"
+            "[(folder/n).write_bytes(z.read(n)) for n in z.namelist()];"
+            "os.execv(sys.executable,[sys.executable,str(folder/'portable.py')])")
+    migration = json.loads(json.dumps(egg))
+    migration.update(name="Endstone Fork (公式版から移行・再インストール不要)",
+                     description="停止→このEggへ変更→起動。既存Pythonイメージと同じBDSを保持し、全体バックアップ後に検証済みForkへ移行します。互換Releaseがなければ整合性を確認した既存公式版を起動し、不整合があれば停止します。",
+                     startup="python -c " + shlex.quote(boot))
+    official = json.loads((ROOT / "egg-endstone.json").read_text("utf-8"))
+    migration["docker_images"] = official["docker_images"]
+    for item in migration["variables"]:
+        if item["env_variable"] == "UPDATE_REQUIRE_APPROVAL":
+            item["description"] = "初回だけはこの移行用Eggの選択を承認として検証済みstableを適用します。移行後の更新ではこの設定に従います。"
+    migration["scripts"]["installation"] = {
+        "container": "ghcr.io/pterodactyl/installers:alpine", "entrypoint": "ash",
+        "script": "#!/bin/ash\nset -eu\necho 'Migration Egg: installation does not modify server files. Start the existing server to migrate.'\n"}
+    # Wings must not rewrite allocation or properties before the cold snapshot.
+    migration["config"]["files"] = "{}"
+    (ROOT / "egg-endstone-migrate.json").write_text(json.dumps(migration, ensure_ascii=False, indent=4) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

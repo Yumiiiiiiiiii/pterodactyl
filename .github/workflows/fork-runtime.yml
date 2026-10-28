@@ -29,8 +29,9 @@ jobs:
           python-version: '3.13'
       - run: |
           python build_egg.py
-          git diff --exit-code -- egg-endstone-fork.json
+          git diff --exit-code -- egg-endstone-fork.json egg-endstone-migrate.json
           python validate.py egg-endstone-fork.json
+          python validate.py egg-endstone-migrate.json
           python -m unittest discover -s tests -v
           bash -n runtime/entrypoint.sh
       - uses: docker/setup-buildx-action@v4
@@ -54,10 +55,15 @@ jobs:
           load: true
           tags: endstone-wings:installer-test
       - run: bash tests/test_install_entrypoint.sh endstone-wings:installer-test
+      - name: Run migration Egg on the existing official Python image
+        run: python tests/portable_egg_boot.py --output reports/portable-egg.json
       - uses: actions/upload-artifact@v7
         with:
           name: fork-egg-${{ github.sha }}
-          path: egg-endstone-fork.json
+          path: |
+            egg-endstone-fork.json
+            egg-endstone-migrate.json
+            reports/portable-egg.json
   candidate-image:
     if: github.repository == 'Yumiiiiiiiiii/pterodactyl' && github.event_name == 'workflow_dispatch' && inputs.publish_candidate
     needs: validate

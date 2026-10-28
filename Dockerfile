@@ -16,6 +16,7 @@ RUN apt-get update -qq \
     && useradd --uid 1000 --create-home --home-dir /home/container --shell /bin/bash container
 
 COPY runtime/manager.py /opt/endstone-fork/manager.py
+COPY runtime/migration.py /opt/endstone-fork/migration.py
 COPY runtime/entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh /opt/endstone-fork/manager.py
 

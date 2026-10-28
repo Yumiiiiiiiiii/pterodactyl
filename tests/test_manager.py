@@ -99,7 +99,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(self.contents(), old)
 
     def test_pid_marker_prevents_live_update(self):
-        (self.manager.control / "server.pid").write_text("123")
+        (self.manager.control / "server.pid").write_text(str(os.getpid()))
         with self.assertRaises(RuntimeError):
             self.manager.snapshot()
 

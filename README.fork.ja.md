@@ -10,6 +10,10 @@ Wingsのinstall・BDS1.26.52の起動停止は確認しました。要求の1.26
 
 ## 構成
 
+既存の公式版からは [移行用Eggの手順](MIGRATION.ja.md) を使う。
+`egg-endstone-migrate.json` は既存Dockerを保持し、再インストールせずに移行する。
+以下の専用Docker向けEggとは導入経路が異なる。
+
 - ソース: `Yumiiiiiiiiii/endstone` と `Yumiiiiiiiiii/pterodactyl`
 - Egg: `egg-endstone-fork.json`。元の `egg-endstone.json` は参照用として保存。
 - Docker: Python 3.13 / Linux amd64、既定UID 1000、`/home/container`。
@@ -107,7 +111,7 @@ docker build --target installer -t endstone-wings:installer-test .
 bash tests/test_install_entrypoint.sh endstone-wings:installer-test
 ```
 
-ローカルの20件は認証境界とオフライン故障注入試験。relayの実行権限・配置・改ざん拒否と
+ローカルの管理コード試験は38件。認証境界とオフライン故障注入試験に移行試験を加える。relayの実行権限・配置・改ざん拒否と
 旧world/Wheel/relayの同時復旧も含む。実際の新BDSの起動に合格した証拠ではない。
 GH ActionsのDockerジョブも、オフライン管理コードの試験とBDS/Wingsの実機試験を区別する。
 
