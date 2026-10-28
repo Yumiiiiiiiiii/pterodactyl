@@ -27,6 +27,11 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         # Do not echo the startup's large base64 payload into Actions logs.
         args.output.write_text(json.dumps(report, indent=2) + "\n")
+        # GitHub's host runner can use UID 1001. Remove only this disposable
+        # control folder as its actual owner before TemporaryDirectory cleanup.
+        subprocess.run(["docker", "run", "--rm", "--network", "none", "--user", "1000:1000",
+            "--entrypoint", "python", "-v", str(root) + ":/home/container", image,
+            "-c", "import shutil;shutil.rmtree('/home/container/.fork',ignore_errors=True)"], check=True)
         assert report["python_runtime"] and report["empty_server_rejected"] and not report["server_files_created"], report
         print("Official Python 3.14 image: portable bootstrap passed; empty world safely rejected")
 

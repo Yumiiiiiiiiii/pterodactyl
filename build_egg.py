@@ -53,12 +53,13 @@ def main():
     # A self-contained startup works with the existing official image. No
     # custom image, git clone, shell downloader or reinstall is required.
     payload = io.BytesIO()
-    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+    # libbz2 emits stable bytes across Python/zlib versions on Windows/Linux.
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_BZIP2) as bundle:
         for name in ("manager.py", "migration.py", "portable.py", "python-runtime.json"):
             entry = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
             entry.create_system = 3
             entry.external_attr = 0o100644 << 16
-            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.compress_type = zipfile.ZIP_BZIP2
             bundle.writestr(entry, (ROOT / "runtime" / name).read_bytes().replace(b"\r\n", b"\n"))
     encoded = base64.b64encode(payload.getvalue()).decode("ascii")
     checksum = hashlib.sha256(payload.getvalue()).hexdigest()
